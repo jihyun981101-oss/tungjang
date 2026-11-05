@@ -767,6 +767,20 @@ const A={
     catch(e){if(/popup|cancelled|blocked/i.test(e.code||'')){try{await FB.auth.signInWithRedirect(prov);return}catch(e2){toast('로그인 실패: '+(e2.message||e2.code));return}}toast('로그인 실패: '+(e.message||e.code));return}
     await connectCloud();toast('클라우드 동기화 시작');
   },
+  async fbEmail(mode){
+    let ok=false;try{ok=await fbInit()}catch(e){toast('Firebase 불러오기 실패: '+(e.message||e));return}
+    if(!ok){toast('먼저 Firebase 설정을 저장하세요');return}
+    const email=($('#fb-email').value||'').trim(),pw=$('#fb-pw').value||'';
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){toast('이메일 형식을 확인해요');$('#fb-email').focus();return}
+    if(mode!=='reset'&&pw.length<6){toast('비밀번호는 6자 이상');$('#fb-pw').focus();return}
+    const nice=e=>({'auth/email-already-in-use':'이미 가입된 이메일이에요. 로그인을 눌러요','auth/invalid-credential':'이메일 또는 비밀번호가 달라요','auth/wrong-password':'비밀번호가 달라요','auth/user-not-found':'가입되지 않은 이메일이에요. 계정 만들기를 눌러요','auth/weak-password':'비밀번호가 너무 짧아요','auth/invalid-email':'이메일 형식이 아니에요','auth/operation-not-allowed':'Firebase에서 이메일/비밀번호 로그인이 꺼져 있어요','auth/too-many-requests':'시도가 너무 많아요. 잠시 후 다시','auth/network-request-failed':'인터넷 연결을 확인해요'}[e.code]||(e.message||e.code));
+    try{
+      if(mode==='signup'){const r=await FB.auth.createUserWithEmailAndPassword(email,pw);FB.user=r.user;toast('계정을 만들었어요')}
+      else if(mode==='login'){const r=await FB.auth.signInWithEmailAndPassword(email,pw);FB.user=r.user}
+      else{await FB.auth.sendPasswordResetEmail(email);toast('비밀번호 재설정 메일을 보냈어요');return}
+    }catch(e){toast(nice(e));return}
+    await connectCloud();toast('이 계정으로 동기화 시작');
+  },
   async fbLogout(){if(FB.auth)await FB.auth.signOut();FB.user=null;S.db=null;S.syncState='local';render();toast('로그아웃. 이 폰 기록은 그대로 남아요')},
   async setLock(){
     const a=$('#lk-new').value,b=$('#lk-new2').value,timeout=+$('#lk-timeout').value||0;
@@ -1138,11 +1152,15 @@ function renderCloud(){
     <p class="note" style="margin-top:0">여러 기기에서 같은 기록을 보려면 본인 Google 계정의 Firebase(무료)에 저장해요. 기록은 본인 계정만 읽고 쓸 수 있게 잠가요. 설정 방법은 <a href="https://github.com/jihyun981101-oss/tungjang#클라우드-동기화-설정-firebase" target="_blank" rel="noopener" style="color:var(--accent)">안내 문서</a>를 봐요.</p>
     <div class="field"><label>Firebase 콘솔에서 복사한 firebaseConfig 붙여넣기</label><textarea class="inp" id="fb-cfg" placeholder='const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", ... };'></textarea></div>
     <button class="btn wide" style="margin-top:10px" onclick="A.saveFbCfg()">설정 저장</button></section>`;
-  if(!FB.user)return `<section class="card"><h2>클라우드 동기화</h2>
-    <p class="note" style="margin-top:0">Firebase 프로젝트 <b>${esc(cfg.projectId)}</b>에 연결돼 있어요. Google 계정으로 로그인하면 동기화가 시작돼요.${FB.err?`<br><span style="color:var(--bad)">${esc(FB.err)}</span>`:''}</p>
-    <div class="btnrow"><button class="btn" onclick="A.fbLogin()">Google로 로그인</button><button class="btn ghost" onclick="A.clearFbCfg()">설정 지우기</button></div></section>`;
-  return `<section class="card"><h2>클라우드 동기화 <span class="pill good">켜짐</span></h2>
-    <p class="note" style="margin-top:0"><b>${esc(FB.user.email||FB.user.uid)}</b> 계정의 Firebase(<b>${esc(cfg.projectId)}</b>)에 저장돼요. 다른 폰이나 PC에서 같은 주소를 열고 같은 계정으로 로그인하면 똑같이 보여요.</p>
+  if(!FB.user)return `<section class="card"><h2>내 계정 <span class="sub">여러 기기에서 같은 기록</span></h2>
+    <p class="note" style="margin-top:0">계정을 만들면 기록이 그 계정에 저장돼요. 다른 폰이나 컴퓨터에서 같은 주소를 열고 로그인하면 똑같이 보여요.${FB.err?`<br><span style="color:var(--bad)">${esc(FB.err)}</span>`:''}</p>
+    <div class="field"><label>이메일</label><input class="inp" id="fb-email" type="email" inputmode="email" autocomplete="username" placeholder="me@example.com"></div>
+    <div class="field"><label>비밀번호 (6자 이상)</label><input class="inp" id="fb-pw" type="password" autocomplete="current-password"></div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="A.fbEmail('login')">로그인</button><button class="btn ghost" onclick="A.fbEmail('signup')">계정 만들기</button></div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn sm ghost" onclick="A.fbEmail('reset')">비밀번호 재설정 메일</button><button class="btn sm ghost" onclick="A.fbLogin()">Google로 로그인</button>${FB_DEFAULT_CFG&&cfg===FB_DEFAULT_CFG?'':`<button class="btn sm ghost" onclick="A.clearFbCfg()">설정 지우기</button>`}</div>
+    <p class="note">저장소: Firebase 프로젝트 ${esc(cfg.projectId)} (본인 소유). 계정 비밀번호는 앱 잠금 비밀번호와 별개예요.</p></section>`;
+  return `<section class="card"><h2>내 계정 <span class="pill good">동기화 켜짐</span></h2>
+    <p class="note" style="margin-top:0"><b>${esc(FB.user.email||FB.user.uid)}</b> 계정에 저장되고 있어요. 다른 폰이나 컴퓨터에서 같은 주소를 열고 이 계정으로 로그인하면 똑같이 보여요.</p>
     <div class="btnrow"><button class="btn ghost" onclick="connectCloud()">지금 동기화</button><button class="btn ghost" onclick="A.fbLogout()">로그아웃</button></div></section>`;
 }
 
@@ -1204,7 +1222,8 @@ function renderSet(){
 
 /* ---------- cloud sync (standalone site: Firebase, 본인 계정만 읽기/쓰기) ---------- */
 const FB={cfg:null,auth:null,user:null,ready:false,err:null};
-const fbCfgGet=()=>{try{return JSON.parse(localStorage.getItem(LS+'fbcfg')||'null')}catch{return null}};
+const FB_DEFAULT_CFG=null; // 배포 시 firebaseConfig 객체를 넣으면 모든 기기에서 설정 없이 로그인만 하면 됨
+const fbCfgGet=()=>{try{return JSON.parse(localStorage.getItem(LS+'fbcfg')||'null')||FB_DEFAULT_CFG}catch{return FB_DEFAULT_CFG}};
 function parseFbCfg(txt){const m=String(txt||'').match(/\{[\s\S]*\}/);if(!m)return null;try{return JSON.parse(m[0])}catch{}try{return Function('"use strict";return ('+m[0]+')')()}catch{return null}}
 function loadScript(src){return new Promise((res,rej)=>{const el=document.createElement('script');el.src=src;el.onload=res;el.onerror=()=>rej(new Error('스크립트 로드 실패'));document.head.appendChild(el)})}
 async function fbInit(){
