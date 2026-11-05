@@ -1222,7 +1222,7 @@ function renderSet(){
 
 /* ---------- cloud sync (standalone site: Firebase, 본인 계정만 읽기/쓰기) ---------- */
 const FB={cfg:null,auth:null,user:null,ready:false,err:null};
-const FB_DEFAULT_CFG=null; // 배포 시 firebaseConfig 객체를 넣으면 모든 기기에서 설정 없이 로그인만 하면 됨
+const FB_DEFAULT_CFG={apiKey:"AIzaSyDR5UxoFWOlm0P-01g4YjnB0O2rhg_4R_U",authDomain:"tungjang-9edb4.firebaseapp.com",projectId:"tungjang-9edb4",storageBucket:"tungjang-9edb4.firebasestorage.app",messagingSenderId:"733939521907",appId:"1:733939521907:web:593cd3485cc3ccadd6cd06"}; // 공개돼도 되는 값. 데이터 접근은 Firestore 규칙이 본인 계정으로만 제한
 const fbCfgGet=()=>{try{return JSON.parse(localStorage.getItem(LS+'fbcfg')||'null')||FB_DEFAULT_CFG}catch{return FB_DEFAULT_CFG}};
 function parseFbCfg(txt){const m=String(txt||'').match(/\{[\s\S]*\}/);if(!m)return null;try{return JSON.parse(m[0])}catch{}try{return Function('"use strict";return ('+m[0]+')')()}catch{return null}}
 function loadScript(src){return new Promise((res,rej)=>{const el=document.createElement('script');el.src=src;el.onload=res;el.onerror=()=>rej(new Error('스크립트 로드 실패'));document.head.appendChild(el)})}
