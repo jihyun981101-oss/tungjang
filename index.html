@@ -244,6 +244,12 @@ textarea.inp{min-height:80px;resize:vertical}
 .cardbox .meta{display:flex;justify-content:space-between;gap:8px;font-size:12px;opacity:.9;margin-top:8px;flex-wrap:wrap}
 .cardbox .ops{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;position:relative;z-index:1}
 .cardbox .ops button{background:rgba(255,255,255,.22);color:#fff;border-radius:10px;padding:6px 10px;font-size:12px}
+.lock{position:fixed;inset:0;z-index:50;background:var(--bg);display:grid;place-items:center;padding:24px max(16px,env(safe-area-inset-left,0px)) 24px max(16px,env(safe-area-inset-right,0px))}
+.lock>div{width:100%;max-width:360px;text-align:center}
+.lock svg{width:120px;height:140px;margin:0 auto 6px}
+.lock h2{font-size:22px;margin-bottom:12px}
+.lock .err{color:var(--bad);font-size:13px;min-height:18px;margin-top:8px}
+body.locked .tabs,body.locked .fab,body.locked .sheet,body.locked .scrim{display:none!important}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 
@@ -315,7 +321,7 @@ const CARD_COLORS=['#5B6B8C','#C2455F','#2F8F83','#7A5BD1','#C27B2E','#3E6FB5'];
 const defSettings=()=>({budget:0,payday:21,adjustPrev:true,salary:0,salaryAuto:true,holidays:[],accounts:[],cards:[],defaultPay:'cash',cats:DEF_CATS.map(c=>({...c,kw:[...c.kw]})),fixed:[],last:{}});
 
 /* ---------- state ---------- */
-const S={settings:null,loans:{items:[]},wish:{items:[]},months:{},db:null,syncState:'local',tab:'home',viewYM:curYM(),loading:{},edit:null,sheet:null,booted:false,localOnly:false,selDay:null};
+const S={locked:false,hiddenAt:0,loans:{items:[]},wish:{items:[]},months:{},db:null,syncState:'local',tab:'home',viewYM:curYM(),loading:{},edit:null,sheet:null,booted:false,localOnly:false,selDay:null};
 
 /* ---------- storage ---------- */
 const LS='tj:';
@@ -575,9 +581,36 @@ function avatar(tier,level){
   </svg>`;
 }
 
+/* ---------- app lock (password) ---------- */
+const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+async function pwHash(pw,salt,iter){
+  const enc=new TextEncoder();
+  if(window.crypto&&crypto.subtle&&crypto.subtle.importKey){
+    try{const key=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveBits']);
+      const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:enc.encode(salt),iterations:iter,hash:'SHA-256'},key,256);return hex(bits)}catch(e){console.warn(e)}
+  }
+  let h=0x811c9dc5;const str=salt+':'+pw;for(let r=0;r<200;r++)for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)>>>0}return 'weak-'+h.toString(16);
+}
+const lockCfg=()=>S.settings&&S.settings.lock&&S.settings.lock.hash?S.settings.lock:null;
+function lockNow(){if(!lockCfg())return;S.locked=true;document.body.classList.add('locked');if(S.sheet)A.closeSheet();render()}
+async function tryUnlock(){
+  const el=$('#lk-pw');if(!el)return;const pw=el.value;if(!pw)return;const l=lockCfg();
+  const h=await pwHash(pw,l.salt,l.iter||120000);
+  if(h===l.hash){S.locked=false;S.unlockedThisRun=true;document.body.classList.remove('locked');render()}
+  else{const e=$('#lk-err');if(e)e.textContent='비밀번호가 달라요';el.value='';el.focus()}
+}
+function renderLock(){
+  const tier=S.settings.budget?budgetStatus().tier:2;
+  return `<div class="lock"><div>${avatar(tier,'good')}<h2>텅장지킴이</h2>
+    <input class="inp" id="lk-pw" type="password" autocomplete="current-password" placeholder="비밀번호" style="text-align:center;font-size:18px;letter-spacing:.2em">
+    <div class="err" id="lk-err"></div>
+    <button class="btn wide" style="margin-top:6px" onclick="tryUnlock()">열기</button>
+    <p class="note" style="margin-top:14px">비밀번호를 잊었으면 이 폰의 브라우저 데이터를 지우고 백업 파일로 복원해야 해요.</p></div></div>`;
+}
 /* ---------- actions ---------- */
 let toastTimer=null,toastFn=null;
 function toast(msg,undo){
+  if(S.locked)return;
   const t=$('#toast');t.innerHTML=esc(msg)+(undo?'<button onclick="A.toastUndo()">되돌리기</button>':'');toastFn=undo||null;
   t.classList.add('on');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('on'),undo?5000:2800);
 }
@@ -735,6 +768,18 @@ const A={
     await connectCloud();toast('클라우드 동기화 시작');
   },
   async fbLogout(){if(FB.auth)await FB.auth.signOut();FB.user=null;S.db=null;S.syncState='local';render();toast('로그아웃. 이 폰 기록은 그대로 남아요')},
+  async setLock(){
+    const a=$('#lk-new').value,b=$('#lk-new2').value,timeout=+$('#lk-timeout').value||0;
+    if(a.length<4){toast('비밀번호는 4자 이상');return}if(a!==b){toast('두 비밀번호가 달라요');return}
+    const salt=uid()+uid();const iter=120000;const hash=await pwHash(a,salt,iter);
+    S.settings.lock={hash,salt,iter,timeout};saveSettings();render();toast('잠금을 켰어요. 앱을 다시 열 때 비밀번호를 물어봐요');
+  },
+  async setLockTimeout(v){if(!lockCfg())return;S.settings.lock.timeout=+v||0;saveSettings();toast('자동 잠금 시간 저장됨')},
+  async removeLock(){
+    const pw=$('#lk-cur').value;const l=lockCfg();if(!l)return;
+    const h=await pwHash(pw,l.salt,l.iter||120000);if(h!==l.hash){toast('현재 비밀번호가 달라요');return}
+    S.settings.lock=null;saveSettings();render();toast('잠금을 껐어요');
+  },
   backupFile(){
     const txt=JSON.stringify({settings:S.settings,loans:S.loans,wish:S.wish,months:S.months,exported:new Date().toISOString()});
     const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'application/json'}));a.download='tungjang-backup-'+todayS()+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);toast('백업 파일을 저장했어요');
@@ -905,6 +950,7 @@ function openCatSheet(c){
 /* ---------- render ---------- */
 function render(){
   const app=$('#app');if(!S.settings)return;
+  if(S.locked){app.innerHTML=renderLock();const i=$('#lk-pw');if(i){i.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();tryUnlock()}});setTimeout(()=>i.focus(),50)}return}
   ['home','hist','debt','set'].forEach(t=>{const b=$('#tab-'+t);if(b)b.classList.toggle('on',S.tab===t)});
   const syncTitle=S.syncState==='on'?'클라우드 동기화 중':S.syncState==='local'?(STANDALONE?'이 폰에 저장':'이 기기에만 저장'):'연결 중';
   const head=(title)=>`<div class="top"><h1>${title}</h1><span class="date">${koDate(today())}<span class="sync ${S.syncState==='on'?'on':S.syncState==='local'?'local':''}" title="${syncTitle}"></span></span></div>`;
@@ -1100,6 +1146,19 @@ function renderCloud(){
     <div class="btnrow"><button class="btn ghost" onclick="connectCloud()">지금 동기화</button><button class="btn ghost" onclick="A.fbLogout()">로그아웃</button></div></section>`;
 }
 
+function renderLockSet(){
+  const l=lockCfg();const opts=[[0,'바로'],[60,'1분 뒤'],[300,'5분 뒤'],[1800,'30분 뒤']];
+  if(!l)return `<section class="card"><h2>비밀번호 잠금</h2>
+    <p class="note" style="margin-top:0">앱을 열 때 비밀번호를 물어봐요. 폰을 누가 봐도 내역을 못 보게 하는 잠금이에요. 숫자만 써도 되고 글자도 돼요.</p>
+    <div class="grid2"><div class="field"><label>새 비밀번호 (4자 이상)</label><input class="inp" id="lk-new" type="password" autocomplete="new-password"></div><div class="field"><label>한 번 더</label><input class="inp" id="lk-new2" type="password" autocomplete="new-password"></div></div>
+    <div class="field"><label>백그라운드에 뒀다 돌아오면 다시 잠금</label><select class="inp" id="lk-timeout">${opts.map(o=>`<option value="${o[0]}" ${o[0]===60?'selected':''}>${o[1]}</option>`).join('')}</select></div>
+    <button class="btn wide" style="margin-top:10px" onclick="A.setLock()">잠금 켜기</button></section>`;
+  return `<section class="card"><h2>비밀번호 잠금 <span class="pill good">켜짐</span></h2>
+    <div class="field"><label>백그라운드에 뒀다 돌아오면 다시 잠금</label><select class="inp" id="lk-timeout" onchange="A.setLockTimeout(this.value)">${opts.map(o=>`<option value="${o[0]}" ${o[0]===(l.timeout||0)?'selected':''}>${o[1]}</option>`).join('')}</select></div>
+    <div class="field"><label>잠금 끄기 또는 비밀번호 바꾸기 (현재 비밀번호 입력)</label><input class="inp" id="lk-cur" type="password" autocomplete="current-password"></div>
+    <div class="btnrow" style="margin-top:10px"><button class="btn ghost" onclick="A.removeLock()">잠금 끄기</button></div>
+    <p class="note">비밀번호를 바꾸려면 잠금을 끈 뒤 다시 켜요. 비밀번호는 원문이 아니라 해시만 저장돼요.</p></section>`;
+}
 function renderSet(){
   const s=S.settings;const P=period();const bs=balances();const cards=s.cards||[];const accs=s.accounts||[];
   return `<section class="card"><h2>월급</h2>
@@ -1133,6 +1192,7 @@ function renderSet(){
     <section class="card"><h2>카테고리 <button class="lnk" onclick="A.openCat()">＋ 추가</button></h2>
     <div class="chips">${s.cats.map(c=>`<button class="chip" onclick="A.openCat('${c.id}')"><b>${esc(c.emoji)} ${esc(c.name)}</b><small>${(c.kw||[]).slice(0,3).join(', ')||'키워드 없음'}</small></button>`).join('')}</div></section>
     ${STANDALONE?renderCloud():''}
+    ${renderLockSet()}
     <section class="card"><h2>데이터</h2>
     <p class="note" style="margin-top:0">${S.syncState==='on'?(STANDALONE?'기록은 이 폰과 본인 Firebase 계정에 함께 저장돼요.':'기록은 클라우드에 저장되고 있어요. 다른 기기에서 같은 링크로 열어도 그대로 보여요.'):S.localOnly?'클라우드 쓰기 권한이 없어 이 기기에만 저장돼요. 로그인한 본인 계정으로 열면 동기화돼요.':S.syncState==='slow'?'클라우드 응답이 느려 이 기기 기록을 먼저 보여줘요. 저장은 계속 클라우드로도 보내요. 앱 위쪽에 권한 요청이 떠 있으면 허용해 주세요.':STANDALONE?'기록은 이 폰의 브라우저 안에 저장돼요. 홈 화면에 추가한 앱으로만 열면 안전하고, 브라우저 데이터를 지우면 기록도 사라지니 가끔 백업 파일을 저장해 두세요. 여러 기기에서 보려면 위의 클라우드 동기화를 켜요.':'클라우드 연결을 못 해서 이 기기에만 저장돼요. 백업을 가끔 복사해 두세요.'}</p>
     <div class="btnrow"><button class="btn ghost" onclick="A.backup()">백업 복사</button>${STANDALONE?'<button class="btn ghost" onclick="A.backupFile()">백업 파일 저장</button>':''}<button class="btn ghost" onclick="A.openRestore()">백업 복원</button></div>
@@ -1186,6 +1246,7 @@ async function connectCloud(){
     for(const m of need)if(!S.months[m])S.months[m]=lsGet('tx/'+m)||{items:[]};
   }
   lastSync=Date.now();
+  if(lockCfg()&&!S.locked&&!S.unlockedThisRun){S.locked=true;document.body.classList.add('locked')}
   if(S.settings.balance&&!(S.settings.accounts||[]).length){const b=S.settings.balance;S.settings.accounts=[{id:'ac'+uid(),name:'주거래 통장',amt:b.amt,date:b.date,ts:b.ts,main:true}];delete S.settings.balance;saveSettings();}
   render();autopost();render();
 }
@@ -1196,8 +1257,13 @@ async function boot(){
   const ym=curYM();
   for(let i=0;i<=6;i++){const m=addMonthsYM(ym,-i);const d=lsGet('tx/'+m);if(d)S.months[m]=d}
   try{S.tab=localStorage.getItem(LS+'tab')||'home'}catch{}
+  if(lockCfg()){S.locked=true;document.body.classList.add('locked')}
   S.booted=true;render();
   await connectCloud();
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='hidden'){S.hiddenAt=Date.now();return}
+    const l=lockCfg();if(l&&!S.locked&&S.hiddenAt&&Date.now()-S.hiddenAt>=(l.timeout||0)*1000)lockNow();
+  });
   setInterval(()=>{if(S.tab==='home'&&!S.sheet)render()},60000);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&S.db&&Date.now()-lastSync>60000&&!S.sheet)connectCloud()});
 }
